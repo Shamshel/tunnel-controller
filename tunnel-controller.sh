@@ -24,6 +24,11 @@ function help
 
 }
 
+function get_external_ip
+{
+	externalip=$(wget http://ipinfo.io/ip -qO -)
+}
+
 #
 # Traps ctrl_c interrupt
 #
@@ -140,7 +145,8 @@ function startTunnel
 
 	while [ $retries -gt 0 ]
 	do
-		tunnel_ip=$(externalip)
+		get_external_ip
+		tunnel_ip=$externalip
 		if [ "$tunnel_ip" = "$pre_tunnel_ip" ]
 		then
 			(( retries-- ))
@@ -173,7 +179,8 @@ function startTunnel
 #
 function stopTunnel
 {
-	local current_ip=$(externalip)
+	get_external_ip
+	local current_ip=$externalip
 	local new_ip=$1
 
 	service openvpn stop
@@ -182,7 +189,8 @@ function stopTunnel
 
 	while [ $retries -gt 0 ]
 	do
-		new_ip=$(externalip)
+		get_external_ip
+		new_ip=$externalip
 		if [ "$new_ip" = "$current_ip" ]
 		then
 			(( retries-- ))
@@ -277,7 +285,8 @@ function stopProgram
 #
 function monitorTunnel
 {
-	local current_ip=$(externalip)
+	get_external_ip
+	local current_ip=$externalip
 
 	echo "Monitoring tunnel, use Ctrl+c to exit."
 
@@ -413,7 +422,8 @@ openvpn_master_config_path="$openvpn_root""$openvpn_master_config"
 
 exit_on_fail setConfig "$default_server"
 
-pre_tunnel_ip=$(externalip)
+get_external_ip
+pre_tunnel_ip=$externalip
 
 echo "Pre-tunnel IP: $pre_tunnel_ip"
 
