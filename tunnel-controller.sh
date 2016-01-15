@@ -9,7 +9,7 @@ function help
 	echo ""
 	echo "-h, --help	show brief help"
 	echo "-s 'a srv.ovpn'	set default ovpn server"
-#	echo "-b a,b	set backup opvn server(s)"
+	echo "-b a,b	set backup opvn server(s)"
 #	echo "-p a,b	set control program(s)"
 	echo "-c	sourced config file"
 #	echo "-e	ISP name (case insensitive)"
@@ -90,14 +90,97 @@ function retry_on_fail
 }
 
 #
+# Removes the first item and shifts the remaining array contents
+#
+# Modifies global variable 'backup_servers'
+#
+# Returns 0 on success, 1 otherwise
+#
+function backup_servers_pop_front
+{
+	local tmp=''
+	local len=${#backup_servers[@]}
+
+	if [ $len -gt 0 ]
+	then
+		unset backup_servers[0]
+
+		for i in $(seq 1 $(($len-1)));
+		do
+			tmp=${backup_servers[$i]}
+			backup_servers[$(($i-1))]="$tmp"
+		done
+
+		unset backup_servers[$((len-1))]
+		return 0
+	fi
+
+	return 1
+}
+
+#
+# Pushes the first argument to the back of backup_servers
+#
+# Pushes first argument to the end of backup_servers
+#
+# Returns 0 on success, 1 otherwise
+#
+function backup_servers_push_back
+{
+	local len=${#backup_servers[@]}
+
+	backup_servers[$len]="$1"
+
+	if [ $(($len+1)) -eq ${#backup_servers[@]} ]
+	then
+		return 0
+	fi
+
+	return 1
+}
+
+#
+# Changes primary server to next backup server in
+# the array and pops current default server to
+# the end of the backup_servers list
+#
+# Takes no arguments
+#
+# Modifies the backup array by popping first next
+# available server and pushing the current primary
+# server to the end.
+#
+# Returns 0 on success, 1 otherwise
+#
+function change_default_server
+{
+	local tmp=$default_server
+
+	if [ ${#backup_servers[@]} -gt 0 ]
+	then
+		echo "changing server from $default_server to ${backup_servers[0]}"
+
+		default_server=${backup_servers[0]}
+
+		backup_servers_pop_front
+		backup_servers_push_back $tmp
+
+		return 0
+	fi
+
+	return 1
+}
+
+#
 # Setup configuration file symlink.
 #
 # OpenVPN service looks for /etc/openvpn/login.conf on start.
 #
 # Takes one argument, the name of the config file to symlink.
+#
 # Returns 0 if successful, 1 upon error.
 #
-function setConfig
+function set_config
 {
 	if [ -L $openvpn_master_config_path ]
 	then
@@ -115,7 +198,7 @@ function setConfig
 	if [ ! -e "$openvpn_config_directory""$1" ]
 	then
 		echo "Config file "$1" does not exist."
-		return -1
+		return 1
 	fi
 
 	ln -s "$openvpn_config_directory""$1" "$openvpn_master_config_path"
@@ -134,7 +217,7 @@ function setConfig
 # OpenVPN dumps errors to /var/log/syslog, check there if this
 # constantly fails.
 #
-function startTunnel
+function start_tunnel
 {
 	local pre_tunnel_ip=$1
 	tunnel_ip=-1
@@ -146,7 +229,7 @@ function startTunnel
 	while [ $retries -gt 0 ]
 	do
 		get_external_ip
-		tunnel_ip=$externalip
+		tunnel_ip=$(externalip)
 		if [ "$tunnel_ip" = "$pre_tunnel_ip" ]
 		then
 			(( retries-- ))
@@ -163,9 +246,8 @@ function startTunnel
 		return 1
 	else
 		echo "Tunneled IP: $tunnel_ip"
+		return 0
 	fi
-
-	return 0
 }
 
 #
@@ -177,10 +259,10 @@ function startTunnel
 #
 # Returns 0 if the ip changes, 1 otherwise.
 #
-function stopTunnel
+function stop_tunnel
 {
 	get_external_ip
-	local current_ip=$externalip
+	local current_ip=$(externalip)
 	local new_ip=$1
 
 	service openvpn stop
@@ -190,7 +272,7 @@ function stopTunnel
 	while [ $retries -gt 0 ]
 	do
 		get_external_ip
-		new_ip=$externalip
+		new_ip=$(externalip)
 		if [ "$new_ip" = "$current_ip" ]
 		then
 			(( retries-- ))
@@ -221,15 +303,27 @@ function stopTunnel
 #
 # Returns 0 if successful, 1 otherwise.
 #
-function restartTunnel
+function restart_tunnel
 {
-	exit_on_fail stopProgram
+	stop_program
 
-	exit_on_fail stopTunnel
+	stop_tunnel
 
-	exit_on_fail startTunnel
+	start_tunnel $pre_tunnel_ip
 
-	exit_on_fail startProgram
+	if [  $? -eq 1 ]
+	then
+		return 1
+	fi
+
+	start_program
+
+	if [  $? -eq 1 ]
+	then
+		return 1
+	fi
+
+	return 0
 }
 
 #
@@ -239,7 +333,7 @@ function restartTunnel
 #
 # Returns the value of the executed string.
 #
-function startProgram
+function start_program
 {
 	eval $start_command
 
@@ -260,7 +354,7 @@ function startProgram
 #
 # Returns the value of the executed string.
 #
-function stopProgram
+function stop_program
 {
 	eval $stop_command
 
@@ -283,10 +377,11 @@ function stopProgram
 #
 # returns 0 if exited on interrupt, 1 otherwise.
 #
-function monitorTunnel
+function monitor_tunnel
 {
 	get_external_ip
-	local current_ip=$externalip
+	local current_ip=$(externalip)
+	local status=0
 
 	echo "Monitoring tunnel, use Ctrl+c to exit."
 
@@ -303,22 +398,38 @@ function monitorTunnel
 		then
 			echo "Tunnel crashed! attempting reconnect."
 
-			retry_on_fail 5 restartTunnel
+			status=1
+
+			while [ $status -eq 1 ]
+			do
+				restart_tunnel
+
+				status=$?
+
+				# change default server, if possible
+				if [ $status -eq 1 ]
+				then
+					echo "Unable to restart using server $default_server"
+
+					change_default_server
+
+					set_config "$default_server"
+
+					echo "Changed to $default_server, reattempting"
+				fi
+			done
+
+			echo "Tunnel back up, IP: $tunnel_ip"
 			
 		else
 			echo "Tunnel still up, sleeping."
 			sleep $integ_check_interval
 		fi
+
+		get_external_ip
+		current_ip=$(externalip)
 	done
 }
-
-####### configuratio and parsing #######
-
-# Detect if running as root
-if [ "$EUID" -ne 0 ]
-then
-	help
-fi
 
 # Default settings
 openvpn_root="/etc/openvpn/"
@@ -416,32 +527,31 @@ do
 done
 
 interrupt=false
+
 openvpn_master_config_path="$openvpn_root""$openvpn_master_config"
 
-########### "main" ###########
+########### main ###########
 
-exit_on_fail setConfig "$default_server"
+exit_on_fail set_config "$default_server"
 
 get_external_ip
-pre_tunnel_ip=$externalip
+pre_tunnel_ip=$(externalip)
 
 echo "Pre-tunnel IP: $pre_tunnel_ip"
 
-exit_on_fail startTunnel $pre_tunnel_ip
+exit_on_fail start_tunnel $pre_tunnel_ip
 
-exit_on_fail startProgram
+exit_on_fail start_program
 
 echo "Beginning monitor cycle."
 
 trap ctrl_c INT
 
-monitorTunnel
+monitor_tunnel
 
-stopProgram
+stop_program
 
-stopTunnel $tunnel_ip
-
-
+stop_tunnel $tunnel_ip
 
 if [ "$post_tunnel_ip" = "$pre_tunnel_ip" ]
 then
