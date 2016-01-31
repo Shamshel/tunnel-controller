@@ -422,7 +422,7 @@ function monitor_tunnel
 			echo "Tunnel back up, IP: $tunnel_ip"
 			
 		else
-			echo "Tunnel still up, sleeping."
+		#	echo "Tunnel still up, sleeping."
 			sleep $integ_check_interval
 		fi
 
