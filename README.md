@@ -8,8 +8,11 @@ The script operates by collecting external ip information, activating an OpenVPN
 The script can be run from anywhere in the system, assuming run as root, and the default absolute, paths are used. By default, the program looks in the path "/etc/openvpn/pia/" for the openvpn config files.  For example, if the desired default server is configured in the file "US East.ovpn", then the program will attempt to create the simlink "/etc/openvpn/login.conf -> /etc/openvpn/pia/US\ East.ovpn" before attempting to activate the command specified in the "start_command" option.  Be sure to modifiy tunnel-controller.conf to reflect the desired default server, failover servers, and start and stop commands.
 
 In *the author's* configuration, config files live at "/etc/openvpn/pia/", and all config files end with the line "auth-user-pass login.txt". The file "login.txt" lives at "/etc/openvpn/login.txt" and contains the following:
+
 > username
+
 > password
+
 Unfortunately, this does mean that the username and password is stored in plaintext, which is bad, but in my case, the password and username were randomly generated, compartmentalizing the potential damage of a leak.
 
 Note that if the external ip of the machine does not change after OpenVPN activation, the program will assume the tunnel activation failed.
